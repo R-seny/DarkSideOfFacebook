@@ -1,0 +1,145 @@
+---
+title: "DSF 17.02.2016 regression report"
+author: "Moskvichev Arseny"
+date: "Wednesday, February 17, 2016"
+output: html_document
+---
+
+Building linear regression and ordinal regression for the research ...
+
+Predictors:
+val.14 - Psysical assault from stranger (??? scale)
+val.15 - Physical assault from an acquaintance (??? scale)
+val.16 - Sexual harassment (??? scale)
+
+gender and interaction with gender
+
+Predicted variables:
+
+WHOsum (World health organisation well-being index (sum of all scales))
+PCPTSD
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library("ROCR")
+library("ggplot2")
+library("lattice")
+library("car");
+library("sandwich");
+library("dplyr");
+library("broom");
+library("MASS");
+library("memisc");
+library("lmtest");
+library("foreign");
+library("vcd");
+library("pander");
+library("sjPlot");
+library("knitr");
+```
+
+```{r, echo=FALSE}
+
+fb_data = read.csv("data/FBData_3.0.csv", header=T, sep=";")
+complete_data = fb_data[!fb_data$not_finished, ]
+names(complete_data)[1] = "user_id"
+
+not_anonymous <- c("user_id","user_name", "birthday", "tm")
+
+# Create data set without any user identity information
+
+sharable_data = complete_data[, !(names(complete_data) %in% not_anonymous)]
+
+write.csv2(sharable_data, "data/sharable_data_1.0.csv")
+
+```
+
+# Section 1. Predicting PCPTSD score
+
+First, let's visualize the PCPTSD score distribution:
+```{r, echo=FALSE}
+ggplot(data=sharable_data, aes(sharable_data$PCPTSDsum)) + geom_histogram(
+                 binwidth=1,
+                 aes(fill=..count..)) +
+  labs(title="Histogram for PCPTSD") +
+  labs(x="PCPTSD score", y="Count") + 
+  coord_cartesian(xlim = c(0, 5))  
+```
+
+The histogram shape strongly suggests non-normal distribution of the variable under consideration.
+Moreover, no strong theoretical or other evidence support the idea that we should treat the 
+distances between different test scores to be equal. 
+
+So unfortunately, the usage of the ordinary least squares linear regression would be a very doubtful choice,
+since this model assumes continous dependent variable.
+
+We can perform ordinal logistic regression later (if necessary).
+(там вроде бы ничего интересного?)
+
+# Section 2. Predicting WHO score
+
+Based on our theoretical views and previous investigations, we selected the following variables as predictors in our linear model:
+
+* Physical assault from stranger
+* Physical assault from an acquaintance
+* Sexual harassment
+* Gender
+
+We also expected interaction between gender and other predictors
+
+Here is the summary of our basic linear model without interaction:
+```{r, echo=FALSE}
+predictors = c("val.15", "val.16", "val.17", "gender", "WHOsum")
+WHO_prediction_data = sharable_data[, (names(sharable_data) %in% predictors)]
+
+#st_data = mutate_each(WHO_prediction_data, "scale")
+#model_2 = lm(data = st_data, WHOsum ~ .)
+model_1 = lm(data = WHO_prediction_data, WHOsum ~ .)
+summary(model_1)
+a_mod_1 = augment(model_1, WHO_prediction_data);
+```
+
+To estimate the homoscedasticity of residuals, we can plot the residuals for different values of predictors:
+```{r, echo=FALSE}
+qplot(data = a_mod_1, val.15, .resid);
+qplot(data = a_mod_1, val.16, .resid);
+qplot(data = a_mod_1, val.17, .resid);
+qplot(data = a_mod_1, gender, .resid);
+
+tmp = data.frame("residuals" = a_mod_1$.resid, "gender" = a_mod_1$gender)
+ggplot(tmp, aes(residuals, fill = as.factor(gender))) + geom_density(alpha = 0.2)
+
+```
+
+Residuals look heteroscedastic and even non-normal. This may indicate the fact that we need to include interactions, as was suggested in the first place.
+
+Howewer, adding doing so does not mitigate the problem at all.
+
+```{r, echo=FALSE}
+
+model_2 = lm(data = WHO_prediction_data, WHOsum ~ val.15 + val.16 + val.17 + gender + val.17:gender + val.16:gender)
+a_mod_2 = augment(model_2, WHO_prediction_data);
+summary(model_2)
+```
+
+
+```{r, echo=FALSE}
+qplot(data = a_mod_2, val.15, .resid);
+qplot(data = a_mod_2, val.16, .resid);
+qplot(data = a_mod_2, val.17, .resid);
+qplot(data = a_mod_2, gender, .resid);
+
+tmp = data.frame("residuals" = a_mod_2$.resid, "gender" = a_mod_2$gender)
+
+ggplot(tmp, aes(residuals, fill = as.factor(gender))) + geom_density(alpha = 0.2)
+
+#qplot(val.15, WHOsum, data = model_2, colour = gender)
+```
+
+Indeed, the residuals are not distributed normally in general, even in the model that includes interactions:
+
+```{r, echo=FALSE}
+ggplot(a_mod_2, aes(.resid, fill="red")) + geom_density(alpha = 0.2)
+```
+
+This may only indicate the fact that the suggested simple linear regression model is not suitable for our data.
+Possible solutions include adding more variables in the model (which ones - should be suggested by literature review), switching to the model with lots of dummy-variables, using ordinal regression, using more predictors and principal component analysis to find the underlying variables, explaining most of the variance, and so on.
